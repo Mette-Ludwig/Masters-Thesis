@@ -2,7 +2,7 @@
 
 Version
 -------
-R 3.4.1 (2017-06-30)
+R 3.4.3 (2017-12-02)
 
 
 Relevant libraries
