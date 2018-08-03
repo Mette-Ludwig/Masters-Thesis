@@ -1,0 +1,181 @@
+### Alignment of all cells from Campbell et al., Chen et al., Romanov et al. and Pers lab ###
+
+# Load packages
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(reshape2)
+
+## Load preprocessed data sets to be aligned
+# Campbell
+load("~/ygg-projects/mludwig/Data/All_cells/Campbell_all_cells_preprocessed.RData")
+
+# Chen
+load("~/ygg-projects/mludwig/Data/All_cells/Chen_all_cells_preprocessed.RData")
+
+# Romanov
+load("~/ygg-projects/mludwig/Data/All_cells/Romanov_all_cells_preprocessed.RData")
+
+# Pers
+load("~/ygg-projects/mludwig/Data/All_cells/Pers_all_cells_preprocessed.RData")
+
+
+## Set the protocol in each data set for easy identification 
+chen@meta.data[, "protocol"] <- "Chen"
+campbell@meta.data[, "protocol"] <- "Campbell"
+romanov@meta.data[, "protocol"] <- "Romanov"
+pers@meta.data[, "protocol"] <- "Pers"
+
+
+## Gene selection for input to CCA
+# Find variable genes
+campbell <- FindVariableGenes(campbell, do.plot = F, display.progress = F)
+chen <- FindVariableGenes(chen, do.plot = F, display.progress = F)
+romanov <- FindVariableGenes(romanov, do.plot = F, display.progress = F)
+pers <- FindVariableGenes(pers, do.plot = F, display.progress = F)
+
+# Determine genes to use for CCA - must be highly variable in at least 2 datasets
+data.list <- list(campbell, chen, romanov, pers)
+
+variable.genes <- c()
+for (i in 1:length(data.list)) {
+  variable.genes <- c(variable.genes, head(rownames(data.list[[i]]@hvg.info), 2000))
+}
+variable.genes <- names(which(table(variable.genes) > 1))
+for (i in 1:length(data.list)) {
+  variable.genes <- variable.genes[variable.genes %in% rownames(data.list[[i]]@scale.data)]
+}
+
+## Run CCA
+hypo <- RunMultiCCA(data.list, genes.use = variable.genes, num.ccs = 30)
+
+
+## Major cell type classification 
+Neurons <- c("a13.Neurons1", "a14.Neurons2", "a15.Neurons3", "a16.Neurons4", "a17.Neurons5",
+             "a18.Neurons6", "GABA1", "GABA2", "GABA3", "GABA4", "GABA5", "GABA6", 
+             "GABA7", "GABA8", "GABA9", "GABA10", "GABA11", "GABA12", "GABA13", 
+             "GABA14", "GABA15", "GABA16", "GABA17", "GABA18", "Glu1", 
+             "Glu2", "Glu3", "Glu4", "Glu5", "Glu6", "Glu7", "Glu8", "Glu9", "Glu10", "Glu11", 
+             "Glu12", "Glu13", "Glu14", "Glu15", "Hista", "Neuron_1", "Neuron_2", "neurons")
+Endothelial_cells <- c("a03.EndothelialCells", "endothelial", 
+                       "Endothelial_2", "Endothelial_3", "Epith1", "Epith2") 
+Ependymal_cells <- c("a09.Ependymocytes", "Ependy", "ependymal", "Endothelial_1_Ependymal")
+Astrocytes <- c("a10.Astrocyte", "Astro", "Astrocyte_1", "Astrocyte_2", "astrocytes")
+Tanycytes <- c("a11.Tanycyte1", "a12.Tanycyte2", "Tany", "Tanycyte_1", "Tanycyte_2")
+Oligodendrocytes <- c("a01.Oligodend3", "a02.Oligodend2", "a05.Oligodend1", "IMO", "MO", 
+                      "Oligodendrocyte_1", "Oligodendrocyte_3", "oligos")
+OPCs <- c("Oligodendrocyte_2_OPC", "a06.NG2/OPC", "OPC", "POPC")
+Immune_cells <- c("a07.PVMMicro", "a08.Fibroblast", "Macro", "Micro", "microglia", "Microglia_1", 
+                  "Microglia_2") 
+Other_cells <- c("a04.MuralCells", "vsm", "Vascular_and_leptomeningial", "a19.ParsTuber1", "a20.ParsTuber2", 
+                 "Red_blood_cell", "SCO")
+Unknown <- c("miss", "Unknown_1_Mix", "Unknown_2_Mural", "Unknown_3_Pars_tuberalis", "zothers")
+
+
+
+hypo@meta.data$major_cell_type <- ""
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Neurons] <- "Neurons"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Endothelial_cells] <- "Endothelial cells"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Ependymal_cells] <- "Ependymal cells"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Astrocytes] <- "Astrocytes"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Tanycytes] <- "Tanycytes"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Oligodendrocytes] <- "Oligodendrocytes"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% OPCs] <- "OPCs"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Immune_cells] <- "Microglia"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Other_cells] <- "Other cell types"
+hypo@meta.data$major_cell_type[hypo@meta.data$cell_type %in% Unknown] <- "Unassigned cell types"
+
+
+## Visualize results of CCA: plot CC1 versus CC2 
+p1 <- DimPlot(object = hypo, reduction.use = "cca", group.by = "protocol", pt.size = 0.5, 
+              do.return = TRUE)
+p2 <- VlnPlot(object = hypo, features.plot = "CC1", group.by = "protocol", do.return = TRUE,
+              point.size.use = 0.1)
+plot_grid(p1, p2)
+
+
+## Decide on CCA dimensions
+DimHeatmap(object = hypo, reduction.type = "cca", cells.use = 500, dim.use = 1:9, 
+           do.balanced = TRUE)
+DimHeatmap(object = hypo, reduction.type = "cca", cells.use = 500, dim.use = 10:18, 
+           do.balanced = TRUE)
+DimHeatmap(object = hypo, reduction.type = "cca", cells.use = 500, dim.use = 19:27, 
+           do.balanced = TRUE)
+
+
+## Detect data set specific cells
+hypo <- CalcVarExpRatio(object = hypo, reduction.type = "pca", grouping.var = "protocol", 
+                        dims.use = 1:8)
+# Discard cells with a CCA to PCA ratio above 0.5
+hypo.discard <- SubsetData(object = hypo, subset.name = "var.ratio.pca", 
+                           accept.high = 0.5)
+hypo <- SubsetData(object = hypo, subset.name = "var.ratio.pca", accept.low = 0.50)
+
+# Inspect discarded cells
+table(hypo.discard@meta.data$protocol)
+table(hypo.discard@meta.data$cell_type)
+
+
+## Align
+hypo <- AlignSubspace(hypo, reduction.type = "cca", grouping.var = "protocol", 
+                      dims.align = 1:8)
+
+
+
+## Visualize the aligned CCAs
+p1 <- VlnPlot(object = hypo, features.plot = "ACC1", group.by = "protocol", 
+              do.return = TRUE, point.size.use = 0.1)
+p2 <- VlnPlot(object = hypo, features.plot = "ACC2", group.by = "protocol", 
+              do.return = TRUE, point.size.use = 0.1)
+plot_grid(p1, p2)
+
+
+## Calculate the aligment score using k = 100
+CalcAlignmentMetric(object = hypo, reduction.use = "cca.aligned", dims.use = 1:8,
+                    grouping.var = "protocol", nn = 100)
+
+
+## t-SNE and clustering
+hypo <- RunTSNE(hypo, reduction.use = "cca.aligned", dims.use = 1:8, 
+                do.fast = T)
+
+
+# Visualization by protocol
+TSNEPlot(hypo, do.return = T, pt.size = 0.5, group.by = "protocol") + xlab("t-SNE 1") + ylab("")
+ggsave("Hypo_aligned.pdf", height = 4, width = 6)
+
+
+# Visualization by cell type
+TSNEPlot(hypo, do.return = T, pt.size = 0.5, group.by = "major_cell_type") +
+  scale_color_manual(values = c("deeppink4", "orange2", "olivedrab3", "green3", "forestgreen", "turquoise3", "navyblue",
+                                "blueviolet", "hotpink1", "maroon3")) + xlab("t-SNE 1") + ylab("t-SNE 2")
+ggsave("Hypo_aligned_cell_types.pdf", height = 4, width = 6.5)
+
+
+
+## Inspect the unaligned data set
+# Run PCA
+hypo.unaligned <- RunPCA(object = hypo, pc.genes = variable.genes, do.print = FALSE, 
+                         pcs.print = 1:5, genes.print = 5, pcs.compute = 100)
+
+# Decide on number of PCs
+# Knee plot
+PCElbowPlot(object = hypo.unaligned, num.pc = 100)
+
+# Heatmaps of the PCs
+PCHeatmap(object = hypo.unaligned, pc.use = 1:9, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = hypo.unaligned, pc.use = 10:18, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = hypo.unaligned, pc.use = 19:27, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = hypo.unaligned, pc.use = 28:36, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+
+
+# Visualize the unaligned data set
+hypo.unaligned <- RunTSNE(hypo.unaligned, reduction.use = "pca", dims.use = 1:28, 
+                          do.fast = T) 
+TSNEPlot(hypo.unaligned, do.return = T, pt.size = 0.5, group.by = "protocol", no.legend = T) +  
+  xlab("t-SNE 1") + ylab("t-SNE 2")
+ggsave("Hypo_unaligned.pdf", height = 4, width = 5)
