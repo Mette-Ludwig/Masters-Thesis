@@ -1,0 +1,190 @@
+### Alignment of neurons from Campbell et al., Chen et al., Romanov et al., Pers group
+# and Henry et al. ###
+
+## Load packages
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(reshape2)
+
+
+## Load preprocessed data sets to be aligned
+# Load neurons from Campbell et al. data set
+load("~/ygg-projects/mludwig/Data/Neurons/Campbell_neurons_preprocessed.RData")
+
+# Load neurons from Chen et al. data set
+load("~/ygg-projects/mludwig/Data/Neurons/Chen_neurons_preprocessed.RData")
+
+# Load neurons from Romanov et al. data set
+load("~/ygg-projects/mludwig/Data/Neurons/Romanov_neurons_preprocessed.RData")
+
+# Load neurons from Pers labdata set
+load("~/ygg-projects/mludwig/Data/Neurons/Pers_neurons_preprocessed.RData")
+
+# Load neurons from Henry et al. data set
+load("~/ygg-projects/mludwig/Dataset_Alignment/Data_preprocessing/Henry_preprocessed.RData")
+
+
+## Set the protocol in each data set for easy identification 
+chen@meta.data[, "protocol"] <- "Chen"
+campbell@meta.data[, "protocol"] <- "Campbell"
+pers@meta.data[, "protocol"] <- "Pers"
+romanov@meta.data[, "protocol"] <- "Romanov"
+henry@meta.data[, "protocol"] <- "Henry"
+
+
+## Gene selection for input to CCA
+# Find variable genes
+campbell <- FindVariableGenes(campbell, do.plot = F, display.progress = F)
+chen <- FindVariableGenes(chen, do.plot = F, display.progress = F)
+romanov <- FindVariableGenes(romanov, do.plot = F, display.progress = F)
+pers <- FindVariableGenes(pers, do.plot = F, display.progress = F)
+henry <- FindVariableGenes(henry, do.plot = F, display.progress = F)
+
+
+# Determine genes to use for CCA - must be highly variable in at least 2 datasets
+data.list <- list(campbell, chen, romanov, pers, henry)
+
+variable.genes <- c()
+for (i in 1:length(data.list)) {
+  variable.genes <- c(variable.genes, head(rownames(data.list[[i]]@hvg.info), 2000))
+}
+variable.genes <- names(which(table(variable.genes) > 1))
+for (i in 1:length(data.list)) {
+  variable.genes <- variable.genes[variable.genes %in% rownames(data.list[[i]]@scale.data)]
+}
+
+
+## Run CCA
+neurons <- RunMultiCCA(data.list, genes.use = variable.genes, num.ccs = 30)
+
+
+## Visualize results of CCA 
+p1 <- DimPlot(object = neurons, reduction.use = "cca", group.by = "protocol", pt.size = 0.5, 
+              do.return = TRUE)
+p2 <- VlnPlot(object = neurons, features.plot = "CC1", group.by = "protocol", do.return = TRUE,
+              point.size.use = 0.1)
+plot_grid(p1, p2)
+
+
+## Decide on CCA dimensions
+DimHeatmap(object = neurons, reduction.type = "cca", cells.use = 500, dim.use = 1:9, 
+           do.balanced = TRUE)
+DimHeatmap(object = neurons, reduction.type = "cca", cells.use = 500, dim.use = 10:18, 
+           do.balanced = TRUE)
+DimHeatmap(object = neurons, reduction.type = "cca", cells.use = 500, dim.use = 19:27, 
+           do.balanced = TRUE)
+
+
+
+## Detect data set specific cells
+neurons <- CalcVarExpRatio(object = neurons, reduction.type = "pca", grouping.var = "protocol", 
+                           dims.use = 1:16)
+
+# Discard cells with a CCA to PCA ratio above 0.5
+neurons.discard <- SubsetData(object = neurons, subset.name = "var.ratio.pca", 
+                              accept.high = 0.5)
+neurons <- SubsetData(object = neurons, subset.name = "var.ratio.pca", accept.low = 0.5)
+
+# Investigate the discarded cells
+sum(table(neurons.discard@meta.data$protocol))
+
+
+## Align
+neurons <- AlignSubspace(neurons, reduction.type = "cca", grouping.var = "protocol", 
+                         dims.align = 1:16)
+
+
+## Calculate the aligment score using k = 100
+CalcAlignmentMetric(object = neurons, reduction.use = "cca.aligned", dims.use = 1:16,
+                    grouping.var = "protocol", nn = 100)
+
+
+
+## Visualization of the alignment
+# Visualize the aligned CCs
+p1 <- VlnPlot(object = neurons, features.plot = "ACC1", group.by = "protocol", 
+              do.return = TRUE, point.size.use = 0.1)
+p2 <- VlnPlot(object = neurons, features.plot = "ACC2", group.by = "protocol", 
+              do.return = TRUE, point.size.use = 0.1)
+plot_grid(p1, p2)
+
+
+# Visualize the aligned data sets with t-SNE
+# Visualization of the AgRP and POMC neurons
+neurons@meta.data$key_neurons <- ""
+
+# Name of AgRP and POMC neurons
+Campbell_AgRP <- c("n12.Agrp/Sst", "n13.Agrp/Gm8773")
+Campbell_POMC <- c("n14.Pomc/Ttr", "n15.Pomc/Anxa2", "n21.Pomc/Glipr1")
+Chen_AgRP <- "GABA15"
+Chen_POMC <- "Glu13"
+Romanov_AgRP <- "GABA 14 (Npy,Agrp)"
+Romanov_POMC <- "GABA 7 (Pomc+/-)"
+
+neurons@meta.data$key_neurons[neurons@meta.data$cell_type %in% Campbell_AgRP] <- "AgRP (Campbell)"
+neurons@meta.data$key_neurons[neurons@meta.data$cell_type %in% Campbell_POMC] <- "Pomc (Campbell)"
+neurons@meta.data$key_neurons[neurons@meta.data$cell_type %in% Chen_AgRP] <- "AgRP (Chen)"
+neurons@meta.data$key_neurons[neurons@meta.data$cell_type %in% Chen_POMC] <- "Pomc (Chen)"
+neurons@meta.data$key_neurons[neurons@meta.data$cell_type %in% Romanov_AgRP] <- "AgRP (Romanov)"
+neurons@meta.data$key_neurons[neurons@meta.data$cell_type %in% Romanov_POMC] <- "Pomc (Romanov)"
+neurons@meta.data$key_neurons[neurons@meta.data$protocol == "Pers"] <- "Unassigned neurons (Pers)"
+neurons@meta.data$key_neurons[neurons@meta.data$key_neurons == ""] <- "Other neurons"
+
+# Visualize with t-SNE
+TSNEPlot(neurons, do.return = T, pt.size = 0.5, group.by = "key_neurons", do.label = F, 
+         label.size = 2) +
+  scale_color_manual(values = c("deeppink4", "deeppink3", "deeppink1",
+                                "paleturquoise2", "green4", "green1", 
+                                "greenyellow", "paleturquoise4")) +
+  xlab("t-SNE 1") + ylab("t-SNE 2")
+
+ggsave("Neurons_sc_and_bulk_aligned.pdf", height = 4, width = 6.7) 
+
+
+## Inspect the unaligned data set
+# Run PCA
+neurons.unaligned <- RunPCA(object = neurons, pc.genes = variable.genes, do.print = FALSE, 
+                            pcs.print = 1:5, genes.print = 5, pcs.compute = 100)
+
+# Decide on number of PCs
+# Knee plot
+PCElbowPlot(object = neurons.unaligned, num.pc = 100)
+
+# Heatmaps of the PCs
+PCHeatmap(object = neurons.unaligned, pc.use = 1:9, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = neurons.unaligned, pc.use = 10:18, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = neurons.unaligned, pc.use = 19:27, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+
+# Visualize the unaligned data set with t-SNE
+neurons.unaligned <- RunTSNE(neurons.unaligned, reduction.use = "pca", dims.use = 1:33, 
+                             do.fast = T)
+TSNEPlot(neurons.unaligned, do.return = T, pt.size = 0.5, group.by = "protocol")
+
+
+
+## Clustering
+# Clustering
+neurons <- FindClusters(neurons, reduction.type = "cca.aligned", 
+                        resolution = 0.8, dims.use = 1:16)
+# Visualization
+TSNEPlot(neurons, do.return = T, do.label = T, no.legend = T) + xlab("t-SNE 1") + ylab("t-SNE 2")
+ggsave("Neurons_sc_and_bulk_clusters.pdf", height = 4, width = 5) 
+
+# Henry et al. AgRP and POMC neurons in cluster 1 and 2
+sum(neurons@meta.data$henry_key_neurons == "Pomc (Henry)" & neurons@ident == 1)
+sum(neurons@meta.data$henry_key_neurons == "AgRP (Henry)" & neurons@ident == 2)
+
+# Campbell AgRP and POMC neurons in cluster 1 and 2
+cluster1 <- sum(neurons@meta.data$key_neurons == "Pomc (Campbell)" & neurons@ident == 1) + sum(neurons@meta.data$key_neurons == "Pomc (Chen)" & neurons@ident == 1) + sum(neurons@meta.data$key_neurons == "Pomc (Romanov)" & neurons@ident == 1) 
+not_cluster1 <- sum(neurons@meta.data$key_neurons == "Pomc (Campbell)" & neurons@ident != 1) + sum(neurons@meta.data$key_neurons == "Pomc (Chen)" & neurons@ident != 1) + sum(neurons@meta.data$key_neurons == "Pomc (Romanov)" & neurons@ident != 1) 
+cluster1 / (cluster1 + not_cluster1)
+
+cluster2 <- sum(neurons@meta.data$key_neurons == "AgRP (Campbell)" & neurons@ident == 2) + sum(neurons@meta.data$key_neurons == "AgRP (Chen)" & neurons@ident == 2) + sum(neurons@meta.data$key_neurons == "AgRP (Romanov)" & neurons@ident == 2) 
+not_cluster2 <- sum(neurons@meta.data$key_neurons == "AgRP (Campbell)" & neurons@ident != 2) + sum(neurons@meta.data$key_neurons == "AgRP (Chen)" & neurons@ident != 2) + sum(neurons@meta.data$key_neurons == "AgRP (Romanov)" & neurons@ident != 2) 
+cluster2 / (cluster2 + not_cluster2)
+
+
