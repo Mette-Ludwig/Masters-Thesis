@@ -1,0 +1,132 @@
+### Association to BMI GWAS signal analysis - theoretical p-value ###
+
+
+# Load packages
+library(WGCNA)
+library(reshape)
+library(ggplot2)
+library(reshape2)
+library(plyr)
+
+
+# Load data
+# Path to module kME values
+WGCNA.path = "~/ygg-projects/mludwig/MAGMA/Data/WGCNA_AgRP_Campbell.csv"
+
+# Path to GWAS gene scores  
+GWAS.path <- "/projects/tp/tmp-bmi-brain/data/magma/"
+
+
+# Mapping files
+mapping.human.entrez.ensembl.path <- "/projects/tp/tmp-bmi-brain/data/mapping/gene_annotation_hsapiens.txt.gz"
+mapping.mouse.gene.human.ensembl.path <- "/projects/timshel/sc-genetics/sc-genetics/data/gene_annotations/Mus_musculus.GRCm38.90.gene_name_version2ensembl.txt.gz"
+mapping.mouse.synonyms.human.ensembl.path <- "/data/genetic-mapping/ncbi/Mus_musculus.gene_info_symbol2ensembl.gz"
+mapping.mouse.human.ensembl.path <- "/projects/timshel/sc-genetics/sc-genetics/data/gene_annotations/gene_annotation.hsapiens_mmusculus_unique_orthologs.GRCh37.ens_v91.txt.gz"
+
+
+# Load module kME values
+modulekME <- read.csv(WGCNA.path, row.names=1, check.names = FALSE, sep = ",")
+
+# Load gene scores
+GWAS.names <- dir(path = GWAS.path, pattern="[.]genes.out", recursive = T)
+GWAS.names <- GWAS.names[1] #  Yengo et al. BMI data
+
+GWAS <- vector(mode="list")
+
+# Mapping from human Entrez gene ID to human Ensembl gene IDs
+mapping.human.entrez.ensembl <- read.csv(gzfile(mapping.human.entrez.ensembl.path), sep="\t", header=T)
+
+# For all GWAS studies
+for(i in 1:length(GWAS)) {
+  
+  # Match Entrez gene ID in the two files 
+  idx <- match(GWAS[[i]]$GENE, mapping.human.entrez.ensembl$entrezgene)
+  mapping <- data.frame(entrez = GWAS[[i]]$GENE, ensembl = mapping.human.entrez.ensembl$ensembl_gene_id[idx])
+  
+  # Add Ensemble gene ID to GWAS study
+  GWAS[[i]]$ENSEMBL = mapping$ensembl
+}
+
+# Mapping the module mouse genes to human Ensembl gene ID 
+# Step 1: Direct mapping
+mapping.mouse.gene.human.ensembl <- read.table(gzfile(mapping.mouse.gene.human.ensembl.path), sep = "\t", header=T)
+mapping <- data.frame(symbol = rownames(modulekME), ensembl.mouse = mapping.mouse.gene.human.ensembl$ensembl_gene_id
+                      [match(rownames(modulekME), mapping.mouse.gene.human.ensembl$gene_name_optimal)])
+
+# Step 2: Map remaining genes using synonyms
+mapping.mouse.synonyms.human.ensembl <- read.csv(gzfile(mapping.mouse.human.ensembl.path), sep="\t", header=T)
+mapping$ensembl.mouse[which(is.na(mapping$ensembl.mouse))] <- mapping.mouse.synonyms.human.ensembl$ensembl[match(mapping$symbol[which(is.na(mapping$ensembl.mouse))], mapping.mouse.synonyms.human.ensembl$symbol)]
+
+
+# Step 3: Mapping from mouse to human Ensembl gene ID
+mapping.mouse.human.ensembl <- read.csv(gzfile(mapping.mouse.human.ensembl.path), sep="\t", header=T)
+mapping$ensembl.human <- mapping.mouse.human.ensembl$ensembl_gene_id[match(mapping$ensembl.mouse, mapping.mouse.human.ensembl$mmusculus_homolog_ensembl_gene)]
+
+
+# For duplicated Ensemble gene IDs, the kME values are averaged
+modulekME$ensembl <- mapping$ensembl.human
+modulekME <- na.omit(modulekME)
+tmp <- within(modulekME, rm("ensembl"))
+
+modulekME.ens <- aggregate(tmp, by=list(modulekME$ensembl), FUN = mean, na.rm = TRUE)
+rownames(modulekME.ens) = modulekME.ens$Group.1
+modulekME.ens <- within(modulekME.ens, rm("Group.1"))
+
+
+# Calculate Spearman's correlation between gene module kME value and GWAS gene significance
+colors <- colnames(modulekME.ens)
+kME.cor.p <- kME.cor.r <- matrix(NA, nrow = length(unique(colors)), ncol = length(GWAS))
+
+rownames(kME.cor.r) = rownames(kME.cor.p) = unique(colors)
+colnames(kME.cor.r) = colnames(kME.cor.p) = names(GWAS) 
+
+## Loop over WGCNA modules and GWAS studies
+for(color in unique(colors)) {
+  for(i in 1:length(GWAS)) {
+    
+    module <- color
+    genes <- intersect(rownames(modulekME.ens), GWAS[[i]]$ENSEMBL)
+    # Significance of genes found in modules
+    x <- -log10(GWAS[[i]]$P[match(genes, GWAS[[i]]$ENSEMBL)])
+    # kME value for genes in module
+    y <- modulekME.ens[match(genes, rownames(modulekME.ens)), module]
+    
+    # Correlation
+    cor <- cor.test(x, y, method = "spearman", exact = F)
+    kME.cor.r[color, i] <- cor$estimate
+    kME.cor.p[color, i] <- cor$p.value
+  }
+}
+
+## Adjust for multiple testing
+kME.cor.p.fdr <- p.adjust(kME.cor.p, method="fdr")
+dim(kME.cor.p.fdr) <- dim(kME.cor.p)  
+dimnames(kME.cor.p.fdr) <- dimnames(kME.cor.p)
+
+
+## Plot
+# Prepare data for plotting
+data <- as.data.frame(kME.cor.p.fdr * sign(kME.cor.r))
+data[data < 0] <- 1 # Only look for positive enrichment
+
+data <- -log10(data)
+data$module <- gsub("ME", "", rownames(data))
+data.melt <- melt(data)
+data.melt$variable <- as.character(data.melt$variable)
+colnames(data)[1] <- "GWAS BMI"
+
+
+p <- ggplot(data.melt, aes(x=variable, y=value, fill=module)) + 
+  geom_bar(stat="identity", position=position_dodge(), color="black") +
+  scale_fill_manual(values=sort(data$module)) + theme_classic() +
+  geom_abline(intercept=-log10(0.05), slope = 0, lty=2) + ylim(0, 30) +
+  labs(x="Modules found in Campbell et al. AgRP neurons", y=expression(-log[10](Q))) + 
+  guides(fill=guide_legend(ncol=2, title="Module")) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(), 
+        axis.title=element_text(size=16)) 
+ggsave(p, filename = "Results/AgRP_Campbell_BMI.pdf", width=10, height=4)
+
+
+## Parts of this code is taken from 
+# Gandal et al. Shared molecular neuropathology across major psychiatric 
+# disorders parallels polygenic overlap. Science, vol. 359, 2018
