@@ -1,0 +1,163 @@
+### Calculate empirical p-value of BMI GWAS association for hypothalamic cell types ###
+
+# Load packages
+library(WGCNA)
+library(reshape)
+library(ggplot2)
+library(reshape2)
+library(plyr)
+
+# Load data
+WGCNA.path = "~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/"
+modulekME.names <- dir(path = WGCNA.path, pattern="[.]csv", recursive = T)
+
+
+modulekME <- vector(mode="list")
+
+for(i in 1:length(modulekME.names)) {
+  modulekME[[i]] <- read.csv(paste(WGCNA.path, modulekME.names[[i]], sep = ""), row.names=1, check.names = FALSE, sep = ",")
+}
+names(modulekME) = gsub(".csv", "", modulekME.names)
+
+# Path to GWAS gene scores  
+GWAS.path <- "/projects/mludwig/MAGMA/Null_GWAS/out_dir/"
+
+
+# Mapping files
+mapping.human.entrez.ensembl.path <- "/projects/tp/tmp-bmi-brain/data/mapping/gene_annotation_hsapiens.txt.gz"
+mapping.mouse.gene.human.ensembl.path <- "/projects/timshel/sc-genetics/sc-genetics/data/gene_annotations/Mus_musculus.GRCm38.90.gene_name_version2ensembl.txt.gz"
+mapping.mouse.synonyms.human.ensembl.path <- "/data/genetic-mapping/ncbi/Mus_musculus.gene_info_symbol2ensembl.gz"
+mapping.mouse.human.ensembl.path <- "/projects/timshel/sc-genetics/sc-genetics/data/gene_annotations/gene_annotation.hsapiens_mmusculus_unique_orthologs.GRCh37.ens_v91.txt.gz"
+
+
+# Load gene scores
+GWAS.names <- dir(path = GWAS.path, pattern="[.]genes.out", recursive = T)
+
+GWAS <- vector(mode="list")
+
+for(i in 1:length(GWAS.names)) {
+  GWAS[[i]] <- read.table(paste(GWAS.path, GWAS.names[[i]], sep = ""), head=T, check.names = FALSE)
+}
+names(GWAS) = gsub(".genes.out", "", GWAS.names)
+
+
+# Mapping from human Entrez gene ID to human Ensembl gene IDs
+mapping.human.entrez.ensembl <- read.csv(gzfile(mapping.human.entrez.ensembl.path), sep="\t", header=T)
+
+# For all GWAS studies
+for(i in 1:length(GWAS)) {
+  
+  # Match Entrez gene ID in the two files 
+  idx <- match(GWAS[[i]]$GENE, mapping.human.entrez.ensembl$entrezgene)
+  mapping <- data.frame(entrez = GWAS[[i]]$GENE, ensembl = mapping.human.entrez.ensembl$ensembl_gene_id[idx])
+  
+  # Add Ensemble gene ID to GWAS study
+  GWAS[[i]]$ENSEMBL = mapping$ensembl
+}
+
+
+for (i in 1:length(modulekME)) {
+
+  modulekME.i <- modulekME[[i]]
+  # Mapping the WGCNA mouse genes to human Ensembl gene ID 
+  # Step 1: Direct mapping
+  mapping.mouse.gene.human.ensembl <- read.table(gzfile(mapping.mouse.gene.human.ensembl.path), sep = "\t", header=T)
+  mapping <- data.frame(symbol = rownames(modulekME.i), ensembl.mouse = mapping.mouse.gene.human.ensembl$ensembl_gene_id
+                        [match(rownames(modulekME.i), mapping.mouse.gene.human.ensembl$gene_name_optimal)])
+  
+  # Step 2: Map remaing genes using synonyms
+  mapping.mouse.synonyms.human.ensembl <- read.csv(gzfile(mapping.mouse.human.ensembl.path), sep="\t", header=T)
+  mapping$ensembl.mouse[which(is.na(mapping$ensembl.mouse))] <- mapping.mouse.synonyms.human.ensembl$ensembl[match(mapping$symbol[which(is.na(mapping$ensembl.mouse))],
+                                                                                                                   mapping.mouse.synonyms.human.ensembl$symbol)]
+  
+  # Step 3: Mapping from mouse to human Ensembl gene ID
+  mapping.mouse.human.ensembl <- read.csv(gzfile(mapping.mouse.human.ensembl.path), sep="\t", header=T)
+  mapping$ensembl.human <- mapping.mouse.human.ensembl$ensembl_gene_id[match(mapping$ensembl.mouse, mapping.mouse.human.ensembl$mmusculus_homolog_ensembl_gene)]
+  
+  # Step 4: Mapping from human Ensembl gene ID to Entrez ID (only needed for gene-set analysis)
+  mapping$entrez <- mapping.human.entrez.ensembl$entrezgene[match(mapping$ensembl.human, mapping.human.entrez.ensembl$ensembl_gene_id)]
+  
+  
+  # For duplicated Ensemble gene IDs, the kME values are averages 
+  modulekME.i$ensembl <- mapping$ensembl.human
+  modulekME.i <- na.omit(modulekME.i)
+  tmp <- within(modulekME.i, rm("ensembl"))
+  
+  modulekME.i.ens <- aggregate(tmp, by=list(modulekME.i$ensembl), FUN = mean, na.rm = TRUE)
+  rownames(modulekME.i.ens) = modulekME.i.ens$Group.1
+  modulekME.i.ens <- within(modulekME.i.ens, rm("Group.1"))
+  
+  
+  # Calculate Spearman's correlation between gene module kME value and GWAS gene significance
+  colors <- colnames(modulekME.i.ens)
+  kME.cor.p <- kME.cor.r <- matrix(NA, nrow = length(unique(colors)), ncol = length(GWAS))
+  
+  rownames(kME.cor.r) = rownames(kME.cor.p) = unique(colors)
+  colnames(kME.cor.r) = colnames(kME.cor.p) = names(GWAS) 
+  
+  # Loop over WGCNA modules and GWAS studies
+  for(color in unique(colors)) {
+    for(k in 1:length(GWAS)) {
+      
+      module <- color
+      genes <- intersect(rownames(modulekME.i.ens), GWAS[[k]]$ENSEMBL)
+      # Significance of genes found in modules
+      x <- -log10(GWAS[[k]]$P[match(genes, GWAS[[k]]$ENSEMBL)])
+      # kME value for genes in module
+      y <- modulekME.i.ens[match(genes, rownames(modulekME.i.ens)), module]
+      
+      # Correlation
+      cor <- cor.test(x, y, method="spearman", exact = F)
+      kME.cor.r[color, k] <- cor$estimate
+      kME.cor.p[color, k] <- cor$p.value
+    }
+  }
+  
+  
+  data <- as.data.frame(kME.cor.p * sign(kME.cor.r))
+  data[data < 0] <- 1 # Only look for positive enrichment
+  
+  data <- -log10(data)
+  
+  empirical.p.value <- data.frame(matrix(NA, nrow = length(rownames(data)), ncol = 1))
+  rownames(empirical.p.value) <- rownames(data)
+  colnames(empirical.p.value) <- "p-value"
+  
+  for (module in unique(rownames(data))) {
+    j <- which(rownames(data) == module)
+    null.gwas.p.values <- data[rownames(data) == module, ]
+    
+    name <- gsub("ME", paste(gsub("BMI_", "", names(modulekME)[i]), "_", sep = ""), rownames(data)[j])
+    idx <- match(name, BMI.GWAS.Q$module)
+    
+    empirical.p.value[j,] <- (sum(null.gwas.p.values > -log10(BMI.GWAS.Q[idx, 1])) + 1) / (length(null.gwas.p.values) + 1)
+  }
+}
+
+BMI.GWAS.Q <- read.csv("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/WGCNA_FDR_Q.csv", 
+                       check.names = FALSE, sep = ",")
+
+
+data <- as.data.frame(kME.cor.p * sign(kME.cor.r))
+data[data < 0] <- 1 # Only look for positive enrichment
+
+data <- -log10(data)
+
+empirical.p.value <- data.frame(matrix(NA, nrow = length(rownames(data)), ncol = 1))
+rownames(empirical.p.value) <- rownames(data)
+colnames(empirical.p.value) <- "p-value"
+
+for (module in unique(rownames(data))) {
+  i <- which(rownames(data) == module)
+  null.gwas.p.values <- data[rownames(data) == module, ]
+  print(BMI.GWAS.Q[module, 1])
+  empirical.p.value[i,] <- (sum(null.gwas.p.values > BMI.GWAS.Q[module, 1]) + 1) / (length(null.gwas.p.values) + 1)
+}
+
+empirical.p.value
+
+empirical.q.value <- p.adjust(empirical.p.value[,1], method="fdr")
+dim(empirical.q.value) <- dim(empirical.p.value)  
+dimnames(empirical.q.value) <- dimnames(empirical.p.value)
+empirical.q.value <- data.frame(empirical.q.value)
+empirical.q.value
