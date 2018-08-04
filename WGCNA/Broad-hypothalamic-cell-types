@@ -1,0 +1,240 @@
+### WGCNA broad hypothalamic cell types ###
+
+
+# Load packages
+library(WGCNA)
+library(flashClust)
+library(Matrix)
+library(ggplot2)
+library(reshape2)
+library(Seurat)
+library(dplyr)
+library(STRINGdb)
+
+
+
+# Load data  
+# Here the gene expression of tanycytes from Campbell et al. is loaded is an example
+load("~/ygg-projects/mludwig/Data/Tanycytes/Tanycytes_Campbell_preprocessed.RData")
+
+# Find variable genes 
+campbell <- FindVariableGenes(campbell, do.plot=F)
+
+# Perform linear dimensional reduction
+campbell <- RunPCA(object = campbell, pc.genes = campbell@var.genes, do.print = FALSE, pcs.print = 1:5, 
+                   genes.print = 5, pcs.compute = 100, fastpath = FALSE, maxit = 300)
+
+campbell <- ProjectPCA(object = campbell, do.print = FALSE)
+
+
+# Inspect knee plot and heatmaps to select the number of PCs for downstream analysis
+PCElbowPlot(object = campbell, num.pc = 100)
+
+PCHeatmap(object = campbell, pc.use = 1:9, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = campbell, pc.use = 10:18, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = campbell, pc.use = 19:27, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+
+num.PCs <- 12
+
+# Top 5000 variable genes
+pca.genes <- campbell@dr$pca@gene.loadings.full[,c(1:num.PCs)]
+pca.genes <-abs(pca.genes)
+pca.genes <- apply(pca.genes, 1, function(x) max(x))
+pca.genes <- names(pca.genes[order(-pca.genes)])[1:5000]
+ExprMat <- t(campbell@data[rownames(campbell@data) %in% pca.genes,])
+
+
+# Choose the soft threshold power beta
+# Calculate potential thresholds
+SubGeneNames <- colnames(ExprMat)
+powers = c(c(1:10), seq(from = 12, to = 20, by = 2))
+sft <- pickSoftThreshold(ExprMat, dataIsExpr = TRUE, powerVector = powers, corFnc = "cor", 
+                         blockSize = ncol(ExprMat),
+                         corOptions = list(use = "p"), networkType = "signed")
+
+
+# Plot scale independence
+par(mfrow = c(1,1))
+cex1 <- 0.9
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], 
+     xlab = "Soft Threshold (power)",
+     ylab = "Scale Free Topology Model Fit, signed R^2", 
+     type="n", main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], labels = powers, cex = cex1,
+     col = "red");
+abline(h=0.80, col="red")
+
+
+# Choose theshold based on where scale independence plot plateaus or local maximum
+softPower <- 8 
+
+
+# Compute TOM dissimilarity 
+TOM <- TOMsimilarityFromExpr(ExprMat, networkType = "signed", TOMType = "signed", power = softPower)
+colnames(TOM) <- rownames(TOM) <- SubGeneNames
+dissTOM <- 1-TOM
+
+# Cluster the TOM dissimilarity matrix
+geneTree <- flashClust(as.dist(dissTOM), method = "complete") 
+plot(geneTree, xlab = "", sub = "", cex = 0.7, labels = FALSE)
+
+
+# Tree cutting
+minModuleSize <- 20
+dynamicMods <- cutreeDynamic(dendro = geneTree, distM = dissTOM, method = "hybrid", 
+                             deepSplit = 1, 
+                             pamRespectsDendro = T, minClusterSize = minModuleSize)
+dynamicColors <- labels2colors(dynamicMods) # Label each module with a unique color
+
+# Plot the modules with colors
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut", dendroLabels = FALSE, 
+                    hang = 0.03, 
+                    addGuide = TRUE, guideHang = 0.05, main = "Gene dendrogram and module colors") 
+
+
+# Compute module Eigengenes
+ExprMat <- as.matrix(ExprMat) 
+MEs <- moduleEigengenes(ExprMat, dynamicColors)$eigengenes  
+
+
+## Merge modules that have a Pearson correlation > 0.8
+# Calculate dissimilarity of module eigengenes
+MEDiss = 1-cor(MEs)
+# Cluster module eigengenes
+METree = flashClust(as.dist(MEDiss), method = "average");
+
+# Plot the result
+sizeGrWindow(7, 6)
+plot(METree, main = "Clustering of module eigengenes",
+     xlab = "", sub = "")
+MEDissThres = 0.20
+abline(h=MEDissThres, col = "red")
+
+# Merge modules
+merge <- mergeCloseModules(ExprMat, dynamicColors, MEs=NULL, useSets=NULL, impute = T, checkDataFormat=T, 
+                           corFnc = cor, corOptions=list(use='p'), useAbs = F, cutHeight = 0.25, verbose = 3)
+
+# The merged module colors
+mergedColors = merge$colors;
+
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs
+
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
+                    c("Dynamic Tree Cut", "Merged dynamic"),
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+
+rownames(mergedMEs) <- rownames(ExprMat) 
+
+
+# Build network object 
+gene.assignments <- data.frame(mergedColors)
+rownames(gene.assignments) <- colnames(ExprMat) # assign gene names as row names
+module.names <- gsub("ME", "", colnames(mergedMEs)) 
+
+Network = list() 
+for (i in 1:length(module.names)){
+  genes <- which(gene.assignments == module.names[i])
+  Network[[i]] <- rownames(gene.assignments)[genes]
+}
+names(Network) <- module.names
+save(Network, file = load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Pers_tanycytes_network.RData")
+
+
+
+## PPI enrichment
+
+# Initialize STRINGdb object of the mus musculus species
+string_db <- STRINGdb$new( version="10", species=10090, score_threshold=0, input_directory="" )
+
+# Create data frame to store PPI enrichment information
+modulePPI = matrix(NA, nrow=length(names(Network)), ncol=1)
+colnames(modulePPI) = c('p-value')
+rownames(modulePPI) = names(Network)
+
+# Loop through all networks and calculate PPI enrichment
+for (m in names(Network)){
+ 
+ i = which(m == rownames(modulePPI))
+ 
+ # Genes in Network
+ genes <- data.frame(gene = Network[[m]])
+ 
+ # Map genes to STRING ID 
+ mapped_genes <- string_db$map(genes, "gene", removeUnmappedRows = TRUE )$STRING_id
+ enrichment <- string_db$get_ppi_enrichment(mapped_genes)$enrichment
+ modulePPI[i, "p-value"] = enrichment
+}
+
+# Correct for multiple testing
+modulePPI.fdr = p.adjust(modulePPI, "fdr")
+dim(modulePPI.fdr) = dim(modulePPI)
+dimnames(modulePPI.fdr) = dimnames(modulePPI)
+modulePPI.fdr[order(modulePPI.fdr),] 
+
+# Plot PPI enrichment
+data <- cbind(rownames(modulePPI.fdr), modulePPI.fdr[,1])
+colnames(data) <- c("module", "Q")
+data <- as.data.frame(data)
+data <- data[order(data$module),]
+data$number <- seq(1, nrow(data))
+data$Q <- -log10(as.numeric(as.character(data$Q)))
+data$module <- as.character(data$module)
+p <- ggplot(data, aes(x=number, y=Q, fill=module)) + 
+ geom_bar(stat="identity", position=position_dodge(), color="black") +
+ scale_fill_manual(values=sort(data$module)) + theme_classic() +
+ geom_abline(intercept=-log10(0.05), slope = 0, lty=2) + ylim(0, 15) +
+ labs(x="Modules found in POMC neurons", y = expression(-log[10](Q-value))) +
+ guides(fill=guide_legend(ncol=2, title="Module")) +
+ theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(), 
+       axis.title=element_text(size=16))
+p
+
+# Module kME
+idx <- which(modulePPI.fdr > 0.05)
+cortable <- cor(ExprMatNeurons, mergedMEs[, -idx])
+write.csv(cortable, file="/projects/mludwig/MAGMA/Data/Modules_hypothalamus/Campbell_tanycytes.csv")
+
+
+# Correlate to diet conditions
+meta <- data.frame(matrix(NA, nrow = nrow(ExprMat)))
+meta$Chow <- ifelse(diet == "Chow", yes=1, no=0)
+meta$HFD <- ifelse(diet == "HFD", yes=1, no=0)
+meta$Fast <- ifelse(diet == "Fast", yes=1, no=0)
+meta <- meta[, c("Chow", "HFD", "Fast")]
+
+
+# HFD 
+meta <- data.frame(matrix(NA, nrow = nrow(ExprMat)))
+meta$Chow <- ifelse(diet == "Chow", yes=1, no=0)
+meta$HFD <- ifelse(diet == "HFD", yes=1, no=0)
+
+meta <- meta[, c("HFD", "Chow")]
+
+idx <- which(meta$HFD == 1 | meta$Chow == 1)
+
+module.diet.cor.HFD <- cor(mergedMEs[idx,], meta[idx,], use = "p")
+module.dietcor.HFD <- module.diet.cor.HFD[sort(rownames(module.diet.cor.HFD)),]
+
+
+# Fasting 
+meta <- data.frame(matrix(NA, nrow = nrow(ExprMat)))
+meta$Fast <- ifelse(diet == "Fast", yes=1, no=0)
+meta$Chow <- ifelse(diet == "Chow", yes=1, no=0)
+
+meta <- meta[, c("Fast", "Chow")]
+
+idx <- which(meta$Fast == 1 | meta$Chow == 1)
+
+module.diet.cor.fast <- cor(mergedMEs[idx,], meta[idx,], use = "p")
+module.diet.cor.fast <- module.diet.cor.fast[sort(rownames(module.diet.cor.fast)),]
+
+# Merge
+module.diet.cor <- cbind(module.diet.cor.HFD[,1], module.diet.cor.fast[,1] )
+colnames(module.diet.cor) <- c("HFD", "Fast")
+write.csv(module.diet.cor, file="/projects/mludwig/WGCNA/Modules_hypothalamus/Diet_correlation/Campbell_tanycytes.csv")
+
