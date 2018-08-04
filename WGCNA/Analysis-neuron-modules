@@ -3,7 +3,7 @@
 library(gProfileR)
 
 # Load Q value for BMI GWAS signal
-Q.values <- read.csv("~/ygg-projects/mludwig/WGCNA/Correlation/BMI_Q.csv", 
+Q.values <- read.csv("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/WGCA_FDR_Q.csv", 
                      check.names = FALSE, sep = ",")
 Q.values.neurons <- Q.values[which(grepl("neurons", Q.values$module)),]
 Q.values.neurons <- Q.values.neurons[order(Q.values.neurons$Q),]
@@ -11,16 +11,16 @@ Q.values.neurons
 
 
 # Load the neuron modules
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Romanov_neurons_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Neurons/Romanov_neurons_network.RData")
 romanov.neurons <- Network
 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Campbell_neurons_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Neurons/Campbell_neurons_network.RData")
 campbell.neurons <- Network
 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Pers_neurons_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Neurons/Pers_neurons_network.RData")
 pers.neurons <- Network
 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Chen_neurons_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Neurons/Chen_neurons_network.RData")
 chen.neurons <- Network
 
 # 10 most significantly BMI GWAS associated modules
@@ -66,7 +66,7 @@ abline(v = -log10(0.05), col = "black", lwd = 2, lty = 2)
 
 ## Find hub genes
 # Load module kME 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Module_kME.RData") 
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Module_kME.RData") 
 
 campbell.neurons <- modulekME[["BMI_Campbell_neurons"]]
 chen.neurons <- modulekME[["BMI_Chen_neurons"]]
