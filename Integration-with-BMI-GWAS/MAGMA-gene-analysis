@@ -1,0 +1,25 @@
+### MAGMA gene analysis ###
+
+# MAGMA and genotype file parameters
+magma_bin=/tools/magma/1.06/magma 
+gene_loc_file=/tools/magma/1.06/NCBI37.3.gene.loc
+plink_files_prefix='/tools/depict/1.0.174/DEPICT/data/genotype_data_plink/ALL.chr_merged.incl_chrX_altQC.snpsnap_collection_extract.2015-07'
+
+# GWAS specific parameters
+project_path=~/ygg-projects/mludwig/MAGMA/Null_GWAS
+label=bmi_locke
+label_path=~/ygg-projects/tp/tmp-bmi-brain/data/magma/
+gene_set_file=~/ygg-data/genetic-genesets/msigdb/6.1/h.all.v6.1.symbols.gmt
+
+# Null GWAS
+gwas_dir=/projects/mludwig/MAGMA/GWAS_data/Run5_intersection
+gwas_out_dir=$project_path/gwas_out_dir_run5/
+  out_dir=$project_path/out_dir_run5/
+  for file in $gwas_dir/*.gz; do
+[ -e "$file" ] || continue
+filename=$(basename $file)
+zcat $file | sed -e '1s/P-value/P/' |sed -e '1s/MarkerName/SNP/' >  $gwas_out_dir/${filename}.tab
+$magma_bin --bfile $plink_files_prefix --gene-covar $project_path/Gene_length_build_37.txt --pval $gwas_out_dir/${filename}.tab N=503 --gene-annot $label_path/${label}.genes.annot --out $out_dir/$filename
+echo $filename
+done
+
