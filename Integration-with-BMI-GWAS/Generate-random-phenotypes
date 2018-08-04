@@ -1,0 +1,10 @@
+### Create phenotupes ###
+phenotype <- read.table("/projects/timshel/sc-genetics/sc-genetics/data/gwas_sumstats_raw/NULL_GWAS/null_gwas_guassian_phenotypes.n100.phe")
+
+# Phenotype (gaussian with mean 0 and sd 1)
+phenotype5 <- phenotype 
+for (i in 3:102){
+  phenotype5[, i] <- rnorm(503, mean = 0, sd = 1)
+}
+write.table(phenotype5, file = "GWAS_data/Phenotype/Phenotype5.txt", sep = "\t", row.names = F, col.names = F, quote = F)
+
