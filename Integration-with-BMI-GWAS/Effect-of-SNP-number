@@ -1,0 +1,52 @@
+### SNP analysis ###
+
+
+SNP.intersect <- read.table("GWAS_data/SNP_intersection/SNP_intersection.txt")
+colnames(SNP.intersect) <- "SNP"
+
+## Extract intersecting SNPs
+# Null GWAS 1
+null.gwas.1 <- read.table(gzfile("GWAS_data/Run1/plink_out.null_gwas.run1.P1.qassoc.tab.gz"), sep="\t", header=T)
+null.gwas.1.intersect <- null.gwas.1[which(null.gwas.1$SNP %in% SNP.intersect$SNP), ]
+write.table(null.gwas.1.intersect, file = "GWAS_data/SNP_intersection/Null_GWAS_SNP_intersection.txt", 
+            sep = "\t", row.names = F, quote = F)
+
+# Null GWAS 2
+null.gwas.2 <- read.csv(gzfile("GWAS_data/Run1/plink_out.null_gwas.run1.P2.qassoc.tab.gz"), sep="\t", header=T)
+null.gwas.2.intersect <- null.gwas.2[which(null.gwas.2$SNP %in% SNP.intersect$SNP), ]
+write.table(null.gwas.2.intersect, file = "GWAS_data/SNP_intersection/Null_GWAS_SNP_intersection2.txt", 
+            sep = "\t", row.names = F, quote = F)
+
+# Yengo et al.
+yengo <- read.csv(gzfile("GWAS_data/Yengo/Meta-analysis_Locke_et_al+UKBiobank_2018.txt.gz.tab.gz"), sep="\t", header=T)
+yengo.intersect <- yengo[which(yengo$SNP %in% SNP.intersect$SNP), ]
+write.table(yengo.intersect, file = "GWAS_data/Yengo/Yengo_intersection.txt", 
+            sep = "\t", row.names = F, quote = F)
+
+# MAGMA gene analysis is run using only these SNPS ...
+
+# Analyse for correlation between MAGMA gene p-values with all SNPs versus interecting SNPs
+# Null GWAS 1
+GWAS.all.SNPs <- read.table("Null_GWAS/out_dir/plink_out.null_gwas.run1.P1.qassoc.tab.gz.genes.out", head=T, check.names = FALSE)
+GWAS.intersecting.SNPs <- read.table("Null_GWAS/out_dir/Null_GWAS_SNP_intersection.txt.gz.genes.out", head=T, check.names = FALSE)
+
+idx <- match(GWAS.intersecting.SNPs$GENE, GWAS.all.SNPs$GENE)
+cor(GWAS.all.SNPs$P[idx], GWAS.intersecting.SNPs$P) 
+# Pearson cor 0.86 
+
+# Null GWAS 2
+GWAS.all.SNPs2 <- read.table("Null_GWAS/out_dir/plink_out.null_gwas.run1.P2.qassoc.tab.gz.genes.out", head=T, check.names = FALSE)
+GWAS.intersecting.SNPs2 <- read.table("Null_GWAS/out_dir/Null_GWAS_SNP_intersection2.txt.gz.genes.out", head=T, check.names = FALSE)
+
+idx <- match(GWAS.intersecting.SNPs2$GENE, GWAS.all.SNPs2$GENE)
+cor(GWAS.all.SNPs2$P[idx], GWAS.intersecting.SNPs2$P) 
+# Pearson cor 0.86 
+
+# Yengo et al.
+Yengo.all.SNPs <- read.table("Null_GWAS/out_dir/Meta-analysis_Locke_et_al+UKBiobank_2018.txt.gz.tab.gz.genes.out", 
+                             head=T, check.names = FALSE)
+Yengo.intersecting.SNPs <- read.table("Null_GWAS/out_dir/Yengo_intersection.txt.gz.genes.out", head=T, check.names = FALSE)
+
+idx <- match(Yengo.intersecting.SNPs$GENE, Yengo.all.SNPs$GENE)
+cor(Yengo.all.SNPs$P[idx], Yengo.intersecting.SNPs$P) 
+# Pearson cor = 1 
