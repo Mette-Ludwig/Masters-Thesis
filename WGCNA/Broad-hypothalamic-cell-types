@@ -142,7 +142,7 @@ for (i in 1:length(module.names)){
   Network[[i]] <- rownames(gene.assignments)[genes]
 }
 names(Network) <- module.names
-save(Network, file = load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Pers_tanycytes_network.RData")
+save(Network, file = load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Tancytes/Pers_tanycytes_network.RData")
 
 
 
