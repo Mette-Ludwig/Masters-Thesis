@@ -161,3 +161,7 @@ dim(empirical.q.value) <- dim(empirical.p.value)
 dimnames(empirical.q.value) <- dimnames(empirical.p.value)
 empirical.q.value <- data.frame(empirical.q.value)
 empirical.q.value
+
+## Parts of this code is taken from 
+# Gandal et al. Shared molecular neuropathology across major psychiatric 
+# disorders parallels polygenic overlap. Science, vol. 359, 2018
