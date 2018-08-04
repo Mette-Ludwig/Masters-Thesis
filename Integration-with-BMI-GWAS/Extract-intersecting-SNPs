@@ -1,0 +1,33 @@
+### Extract intersecting SNPs ###
+
+library(foreach)
+library(doMC)
+
+
+# Allow 10 cores to be used
+registerDoMC(10)
+
+
+# Load SNPs that intersect with Yengo et al.
+SNP.intersect <- read.table("~/ygg-projects/mludwig/MAGMA/GWAS_data/SNP_intersection/SNP_intersection.txt")
+colnames(SNP.intersect) <- "SNP"
+
+
+GWAS.path <- "~/ygg-projects/mludwig/MAGMA/GWAS_data/Run5/"
+GWAS.intersect.path <- "~/ygg-projects/mludwig/MAGMA/GWAS_data/Run5_intersection/"
+
+
+# NULL GWAS 1
+# Load gene scores
+GWAS.names <- dir(path = GWAS.path, pattern="[.]tab.gz", recursive = T)
+
+GWAS <- vector(mode="list")
+
+foreach(i = 1:length(GWAS.names)) %dopar% {
+  
+  GWAS.i <- read.csv(gzfile(paste(GWAS.path, GWAS.names[i], sep = "")), sep="\t", header=T)
+  GWAS.i.intersect <- GWAS.i[which(GWAS.i$SNP %in% SNP.intersect$SNP), ]
+  write.table(GWAS.i.intersect, file = paste(GWAS.intersect.path, "intersection.",  gsub(".gz", "", GWAS.names[i]), sep = ""),
+              sep = "\t", row.names = F, quote = F)
+}
+
