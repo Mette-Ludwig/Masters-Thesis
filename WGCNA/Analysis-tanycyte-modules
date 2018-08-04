@@ -3,16 +3,16 @@
 library(gProfileR)
 
 # Load the tanyctes modules
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Romanov_tanycytes_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Tancytes/Romanov_tanycytes_network.RData")
 romanov.tanycytes <- Network
 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Campbell_tanycytes_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Tancytes/Campbell_tanycytes_network.RData")
 campbell.tanycytes <- Network
 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Pers_tanycytes_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Tancytes/Pers_tanycytes_network.RData")
 pers.tanycytes <- Network
 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Tanycytes/Chen_tanycytes_network.RData")
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Tanycytes/Chen_tanycytes_network.RData")
 chen.tanycytes <- Network
 
 # Intercorrelated tanycytes modules
@@ -58,7 +58,7 @@ abline(v = -log10(0.05), col = "black", lwd = 2, lty = 2)
 ## Find hub genes
 
 # Load module kME 
-load("~/ygg-projects/mludwig/WGCNA/Correlation/Module_kME.RData") 
+load("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Module_kME.RData") 
 
 campbell.tanycytes <- modulekME[["BMI_Campbell_tanycytes"]]
 chen.tanycytes <- modulekME[["BMI_Chen_tanycytes"]]
