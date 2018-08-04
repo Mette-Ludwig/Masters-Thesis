@@ -1,0 +1,363 @@
+### WGCNA of AgRP neurons from Campbell et al. ###
+
+# Load packages
+library(WGCNA)
+library(flashClust)
+library(dplyr)
+library(Matrix)
+library(ggplot2)
+library(gProfileR)
+library(tidyr)
+library(reshape2)
+library(STRINGdb)
+source("Feature_heatmaps.R")
+
+
+# Load Campbell et al. data  
+load(paste("/projects/timshel/sc-hypothalamus_atlas_app/data-SCGE/campbell2017/",
+           "scge.umi.gene_names/GSE93374_Merged_all_020816_DGE.RData", sep=""))
+
+# Subset data into AgRP neurons only
+campbell.n12.neurons <- unique(grep(pattern = "^n12", x = campbell@meta.data$cell_type_neurons, value = TRUE))
+campbell.n13.neurons <- unique(grep(pattern = "^n13", x = campbell@meta.data$cell_type_neurons, value = TRUE))
+campbell.agrp.neurons <- c(campbell.n12.neurons, campbell.n13.neurons)
+neurons.cell.id <- campbell@meta.data$cell_id[campbell@meta.data$cell_type_neurons %in% campbell.agrp.neurons]
+
+neurons <- SubsetData(campbell, cells.use = neurons.cell.id)
+
+## Mitochondial genes
+mito.genes <- grep(pattern = "^MT-", x = rownames(x = neurons@data), value = TRUE,
+                   ignore.case=TRUE)
+percent.mito <- Matrix::colSums(neurons@raw.data[mito.genes,]) / Matrix::colSums(neurons@raw.data)
+neurons <- AddMetaData(object = neurons, metadata = percent.mito, col.name = "percent.mito")
+
+# Compute percentage ribosomal genes
+ribo.genes <- grep(pattern = "^Rp", x = rownames(x = neurons@data), value = TRUE)
+length(ribo.genes) # 152 ribosomal genes
+percent.ribo <- Matrix::colSums(neurons@raw.data[ribo.genes, ])/Matrix::colSums(neurons@raw.data)
+neurons <- AddMetaData(object = neurons, metadata = percent.ribo, col.name = "percent.ribo")
+
+
+## Filter cells
+neurons <- FilterCells(object=neurons, subset.names=c("nGene", "percent.mito"), 
+                       low.thresholds = c(200, -Inf), high.thresholds = c(5000, 0.2))
+
+## Normalize data
+neurons <- NormalizeData(neurons, normalization.method = "LogNormalize", scale.factor = 1e4)
+
+
+## Scale data and regress out "nUMI", "percent.mito" and "percent.ribo"
+neurons <- ScaleData(neurons, vars.to.regress = c("nUMI", "percent.mito", "percent.ribo"))
+
+# Find variable genes 
+neurons <- FindVariableGenes(neurons, do.plot=F)
+length(neurons@var.genes)
+
+
+## Perform linear dimensional reduction 
+neurons <- RunPCA(object = neurons, pc.genes = neurons@var.genes, do.print = FALSE, pcs.print = 1:5, 
+                  genes.print = 5, pcs.compute = 100, fastpath = FALSE, maxit = 300)
+neurons <- ProjectPCA(object = neurons, do.print = FALSE)
+
+
+# Decide on the number of PCs to include downstream
+# Knee plot
+PCElbowPlot(object = neurons, num.pc = 100)
+
+# Heatmaps
+PCHeatmap(object = neurons, pc.use = 1:9, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = neurons, pc.use = 10:18, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = neurons, pc.use = 19:27, cells.use = 500, do.balanced = TRUE, 
+          label.columns = FALSE, use.full = FALSE)
+
+# Normalized expression counts of top 500 variable genes
+pca.genes <- neurons@dr$pca@gene.loadings.full[,c(1:8)]
+pca.genes <-abs(pca.genes)
+pca.genes <- apply(pca.genes, 1, function(x) max(x))
+pca.genes <- names(pca.genes[order(-pca.genes)])[1:5000]
+ExprMat <- t(neurons@data[rownames(neurons@data) %in% pca.genes,])
+
+
+## Choose the soft threshold power beta
+# Calculate potential thresholds
+SubGeneNames <- colnames(ExprMat)
+powers = c(c(1:10), seq(from = 12, to = 20, by = 2))
+
+sft <- pickSoftThreshold(ExprMat, dataIsExpr = TRUE, powerVector = powers, corFnc = "cor", blockSize = ncol(ExprMat),
+                         corOptions = list(use = "p"), networkType = "signed")
+
+# Plot scale independence
+par(mfrow = c(1,1));
+cex1 <- 0.9
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], 
+     xlab = "Soft Threshold (power)",
+     ylab = "Scale Free Topology Model Fit, signed R^2", 
+     type="n", main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], labels = powers, cex = cex1,
+     col = "red");
+abline(h=0.80, col="red")
+
+
+# Choose theshold based on where scale independence plot plateaus (beginning of plateau) or local maximum
+softPower <- 12
+
+
+## WGCNA
+
+# Compute TOM dissimilarity 
+TOM <- TOMsimilarityFromExpr(ExprMat, networkType = "signed", TOMType = "signed", power = softPower);
+colnames(TOM) <- rownames(TOM) <- SubGeneNames
+dissTOM <- 1-TOM
+
+# Cluster the TOM dissimilarity matrix
+geneTree <- flashClust(as.dist(dissTOM), method="complete") 
+plot(geneTree, xlab="", sub="", cex=0.7, labels = FALSE)
+
+# Tree cutting
+minModuleSize <- 20
+dynamicMods <- cutreeDynamic(dendro = geneTree, distM = dissTOM, method = "hybrid", 
+                             deepSplit = 1, 
+                             pamRespectsDendro = T, minClusterSize = minModuleSize)
+dynamicColors <- labels2colors(dynamicMods) # Label each module with a unique color
+
+# Plot the modules with colors
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut", dendroLabels = FALSE, 
+                    hang = 0.03, 
+                    addGuide = TRUE, guideHang = 0.05, main = "Gene dendrogram and module colors") 
+
+
+# Compute module Eigengenes
+ExprMat <- as.matrix(ExprMat) 
+MEs <- moduleEigengenes(ExprMat, dynamicColors)$eigengenes  
+
+
+## Merge modules that have a Pearson correlation > 0.8
+# Calculate dissimilarity of module eigengenes
+MEDiss = 1-cor(MEs)
+# Cluster module eigengenes
+METree = flashClust(as.dist(MEDiss), method = "average");
+
+# Plot the result
+sizeGrWindow(7, 6)
+plot(METree, main = "Clustering of module eigengenes",
+     xlab = "", sub = "")
+MEDissThres = 0.20
+abline(h=MEDissThres, col = "red")
+
+# Merge modules
+merge <- mergeCloseModules(ExprMat, dynamicColors, MEs=NULL, useSets=NULL, impute = T, checkDataFormat=T, 
+                           corFnc = cor, corOptions=list(use='p'), useAbs = F, cutHeight = 0.25, verbose = 3)
+
+# The merged module colors
+mergedColors = merge$colors;
+
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs
+
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
+                    c("Dynamic Tree Cut", "Merged dynamic"),
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+
+rownames(mergedMEs) <- rownames(ExprMat) 
+
+
+# Build network object 
+gene.assignments <- data.frame(mergedColors)
+rownames(gene.assignments) <- colnames(ExprMat) # assign gene names as row names
+module.names <- gsub("ME", "", colnames(mergedMEs)) 
+
+Network = list() 
+for (i in 1:length(module.names)){
+  genes <- which(gene.assignments == module.names[i])
+  Network[[i]] <- rownames(gene.assignments)[genes]
+}
+names(Network) <- module.names
+
+
+# Plot expression of modules
+neurons@meta.data <- cbind(neurons@meta.data, mergedMEs)
+
+FeatureHeatmapUpdated(neurons, features.plot = c("MEturquoise"), group.by= "group", , do.return = T) + 
+  xlab("t-SNE 1") + ylab("") +  scale_colour_gradient(low = "grey", high = "darkred",  
+                                                      guide = guide_colorbar(title = "ME", size = 25),
+                                                      breaks = c(-0.04, -0.02, 0, 0.02, 0.04))  + 
+  theme(plot.title = element_text(lineheight=.8, hjust = 0.5, face="bold", size = 25), strip.background = element_blank(),
+        strip.text.y = element_blank(), strip.text.x = element_blank(),  legend.key.height = unit(1, "cm"),
+        legend.key.width = unit(1, "cm"), legend.text = element_text(size = 16), legend.title=element_text(size=20),
+        axis.title = element_text(size = 18), axis.text=element_text(size=16)) + scale_x_continuous(breaks=c(-20, 0, 20)) + 
+  ggtitle("Turquoise")
+ggsave("ME/Turquoise_AgRP.pdf", height = 4, width = 5.3)
+
+
+
+## PPI enrichment
+
+# Initialize STRINGdb object of the mus musculus species
+string_db <- STRINGdb$new( version="10", species=10090, score_threshold=0, input_directory="" )
+
+# Create data frame to store PPI enrichment information
+modulePPI = matrix(NA, nrow=length(names(Network)), ncol=1)
+colnames(modulePPI) = c('p-value')
+rownames(modulePPI) = names(Network)
+
+# Loop through all networks and calculate PPI enrichment
+for (m in names(Network)){
+  
+  i = which(m == rownames(modulePPI))
+  
+  # Genes in Network
+  genes <- data.frame(gene = Network[[m]])
+  
+  # Map genes to STRING ID 
+  mapped_genes <- string_db$map(genes, "gene", removeUnmappedRows = TRUE )$STRING_id
+  enrichment <- string_db$get_ppi_enrichment(mapped_genes)$enrichment
+  modulePPI[i, "p-value"] = enrichment
+}
+
+# Correct for multiple testing
+modulePPI.fdr = p.adjust(modulePPI, "fdr")
+dim(modulePPI.fdr) = dim(modulePPI)
+dimnames(modulePPI.fdr) = dimnames(modulePPI)
+modulePPI.fdr[order(modulePPI.fdr),] 
+
+# Plot PPI enrichment
+data <- cbind(rownames(modulePPI.fdr), modulePPI.fdr[,1])
+colnames(data) <- c("module", "Q")
+data <- as.data.frame(data)
+data <- data[order(data$module),]
+data$number <- seq(1, nrow(data))
+data$Q <- -log10(as.numeric(as.character(data$Q)))
+data$module <- as.character(data$module)
+p <- ggplot(data, aes(x=number, y=Q, fill=module)) + 
+  geom_bar(stat="identity", position=position_dodge(), color="black") +
+  scale_fill_manual(values=sort(data$module)) + theme_classic() +
+  geom_abline(intercept=-log10(0.05), slope = 0, lty=2) + ylim(0, 15) +
+  labs(x="Modules found in AgRP neurons", y = expression(-log[10](Q-value))) +
+  guides(fill=guide_legend(ncol=2, title="Module")) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(), 
+        axis.title=element_text(size=16))
+p
+
+
+
+# Module kME
+cortable <- cor(ExprMatNeurons, mergedMEs)
+write.csv(cortable, file="~/ygg-projects/mludwig/MAGMA/Data/WGCNA_AgRP_Campbell.csv")
+
+
+
+## Correlation to diets
+# Define numbers of genes and samples
+n.cells <- nrow(ExprMatNeurons[idx,]);
+
+# HFD
+meta <- neurons@meta.data
+meta$HFD <- ifelse(meta$diet == "HFD", yes=1, no=0)
+meta$Chow <- ifelse(meta$diet == "Chow", yes=1, no=0)
+
+meta <- meta[, c("HFD", "Chow")]
+
+idx <- which(meta$HFD == 1 | meta$Chow == 1)
+meta <- meta[idx,]
+
+module.HFD.cor <- cor(MEs, meta)
+module.HFD.cor <- module.HFD.cor[sort(rownames(module.HFD.cor)),]
+module.HFD.P <- corPvalueStudent(module.HFD.cor, n.cells)
+
+
+# Overnight fasted
+meta <- neurons@meta.data
+meta$Fasted <- ifelse(meta$diet == "Fast", yes=1, no=0)
+meta$Chow <- ifelse(meta$diet == "Chow", yes=1, no=0)
+
+meta <- meta[, c("Fasted", "Chow")]
+
+idx <- which(meta$Fasted == 1 | meta$Chow == 1)
+meta <- meta[idx,]
+
+module.fast.cor <- cor(MEs, meta)
+module.fast.cor <- module.fast.cor[sort(rownames(module.fast.cor)),]
+module.fast.P <- corPvalueStudent(module.fast.cor, n.cells)
+
+
+# Adjust for multiple testing
+module.diet.cor <- cbind(module.HFD.cor[,1], module.fast.cor[,1] )
+module.diet.P <- cbind(module.HFD.P[,1], module.fast.P[,1] )
+colnames(module.diet.cor) <- colnames(module.diet.P) <- c("HFD", "Fasted")
+
+module.diet.P.fdr <- p.adjust(module.diet.P, "fdr")
+dim(module.diet.P.fdr) = dim(module.diet.P)
+dimnames(module.diet.P.fdr) = dimnames(module.diet.P)
+
+# PLOT
+data <- module.diet.cor
+data <- cbind(gsub("ME", "" ,rownames(data)), data)
+colnames(data)[1] <- c("module")
+data <- as.data.frame(data)
+
+data$HFD <- as.numeric(as.character(data$HFD))
+data$Fasted <- as.numeric(as.character(data$Fasted))
+data.melt <- melt(data)
+data.melt$p <- ""
+data.melt$p[which(data.melt$variable == "HFD")] <- module.diet.P.fdr[,1] 
+data.melt$p[which(data.melt$variable == "Fasted")]    <- module.diet.P.fdr[,2] 
+data.melt$p <- as.numeric(data.melt$p)
+
+data.melt$p.symbol = ""
+data.melt$p.symbol[data.melt$p<0.05] = "*"
+data.melt$p.symbol[data.melt$p<0.01] = "**"
+data.melt$p.symbol[data.melt$p<0.001] = "***"
+
+
+p = ggplot(data.melt, aes(x = variable, y = value, fill = module, label = p.symbol)) + facet_wrap(~variable, scales = "free_x") + 
+  geom_bar(stat="identity", position = position_dodge(0.9), color = "black") +
+  scale_fill_manual(values = as.character(sort(data$module))) + theme_classic() +
+  geom_text(color = "black", size = 4,  aes(y = value + sign(value)*.04), 
+            position = position_dodge(0.9)) +
+  labs(x="Modules found in Campbell et al. AgRP neurons", y = "Pearson corelation") + ylim(-0.8, 0.8) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(), axis.title = element_text(size = 20), 
+        axis.text=element_text(size=15), strip.text.x = element_text(size = 20), 
+        legend.text = element_text(size = 16), legend.title=element_text(size=18)) + 
+  guides(fill = guide_legend(ncol = 1, title = "Module"))
+p
+ggsave("AgRP_diet_correlation.pdf", height = 5, width = 9)
+
+
+
+# GO and KEGG terms
+terms = data.frame()
+
+for (m in gsub("ME", "", colnames(mergedMEs))) {
+  
+  ## GO Enrichment
+  query =  rownames(t(ExprMat))[mergedColors==m]
+  go <- gprofiler(query, organism="mmusculus", ordered_query = F, correction_method = "fdr", 
+                  src_filter = c("GO", "KEGG"), max_set_size = 2000)
+  
+  go <- go[order(go$p.value),]
+  module_name <- as.data.frame(rep(m, nrow(go)))
+  terms <- rbind(terms, cbind(module_name, go))
+}
+colnames(terms)[1] <- "Module"
+
+
+# Plot the most enriched term for each module
+top_terms = data.frame()
+
+col <- c("brown", "midnightblue", "pink") 
+for (m in col) {
+  idx = which(terms$Module == m) 
+  top_terms = rbind(terms[idx[2:1],], top_terms)  
+}
+
+
+pdf("AgRP_GO_terms.pdf", width = 10, height=12)
+par(oma=c(10,4,0,6), mar=c(0,10,2,1))
+bp = barplot(-log10(resultsGOsub2$p.value), horiz=T, yaxt='n', col=as.character(resultsGOsub2$m), 
+             xlab = expression(-log[10](P)), cex.main=0.7, cex.axis = .7, border=NA, xlim = c(0,25))
+axis(2,at=bp, labels=resultsGOsub2$term.name, tick=FALSE, las=2, cex.axis=0.8);
+abline(v=-log10(0.05), col="black", lwd=2, lty=2)
+
