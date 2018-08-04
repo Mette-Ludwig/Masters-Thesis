@@ -1,0 +1,27 @@
+### Create 100 null GWASs with random distributed phenotypes ###
+
+export BFILE="/projects/timshel/data/SNPsnap_v2-1KG_phase3-EUR/ALL.chr_merged.phase3_shapeit2_mvncall_integrated_v5.20130502.genotypes"
+export PHENO="/projects/mludwig/MAGMA/GWAS_data/Phenotype/Phenotype5.txt"
+export PLINK_EXEC="/projects/mludwig/bin/plink"
+export OUT="/projects/mludwig/MAGMA/GWAS_data/Run5/plink_out.null_gwas.run5"
+
+$PLINK_EXEC --bfile $BFILE --assoc --pheno $PHENO --allow-no-sex --all-pheno --out $OUT
+
+
+## Compress null GWAS 
+# Extract column 2 and 9
+gwas_dir=~/ygg-projects/mludwig/MAGMA/GWAS_data/Run5
+
+for file in $gwas_dir/*.qassoc; do
+[ -e "$file" ] || continue
+filename=$(basename $file)
+gawk '{ print $2"\t"$9; }' $file > $gwas_dir/${filename}.tab
+echo $filename
+
+done
+
+# Remove old files
+rm $gwas_dir/*.qassoc
+
+# Compress
+gzip $gwas_dir/*.tab
