@@ -145,3 +145,7 @@ p <- ggplot(empirical.q.value, aes(x=variable, y=value, fill=module)) +
 ggsave(p, filename = "Results/AgRP_Campbell_BMI_Null_GWAS.pdf", width=10, height=5)
 p
 
+
+## Parts of this code is taken from 
+# Gandal et al. Shared molecular neuropathology across major psychiatric 
+# disorders parallels polygenic overlap. Science, vol. 359, 2018
