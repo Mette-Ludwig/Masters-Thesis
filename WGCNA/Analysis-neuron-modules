@@ -1,0 +1,89 @@
+### Analysis of BMI GWAS associated neuron modules ###
+
+library(gProfileR)
+
+# Load Q value for BMI GWAS signal
+Q.values <- read.csv("~/ygg-projects/mludwig/WGCNA/Correlation/BMI_Q.csv", 
+                     check.names = FALSE, sep = ",")
+Q.values.neurons <- Q.values[which(grepl("neurons", Q.values$module)),]
+Q.values.neurons <- Q.values.neurons[order(Q.values.neurons$Q),]
+Q.values.neurons
+
+
+# Load the neuron modules
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Romanov_neurons_network.RData")
+romanov.neurons <- Network
+
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Campbell_neurons_network.RData")
+campbell.neurons <- Network
+
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Pers_neurons_network.RData")
+pers.neurons <- Network
+
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Neurons/Chen_neurons_network.RData")
+chen.neurons <- Network
+
+# 10 most significantly BMI GWAS associated modules
+neurons_list <- list(romanov.neurons$purple, romanov.neurons$turquoise, campbell.neurons$darkturquoise, 
+                     campbell.neurons$violet, pers.neurons$blue, campbell.neurons$brown, 
+                     chen.neurons$green, campbell.neurons$blue, campbell.neurons$cyan, chen.neurons$yellow)
+
+
+## GO and KEGG enrichment
+terms = data.frame()
+for (m in 1:length(neurons_list)) {
+  
+  ## GO Enrichment
+  query = neurons_list[[m]]
+  go <- gprofiler(query, organism="mmusculus", ordered_query = F, correction_method = "fdr", 
+                  src_filter = c("GO", "KEGG"), max_set_size = 500)
+  
+  go <- go[order(go$p.value),]
+  
+  module_name <- as.data.frame(rep(m, nrow(go)))
+  
+  terms <- rbind(terms, cbind(module_name, go))
+}
+colnames(terms)[1] <- "Module"
+
+
+# Plot the most enriched term for each module
+top_terms = data.frame()
+
+for(m in 1:10) {
+  idx = which(terms$Module == m) 
+  top_terms = rbind(terms[idx[1],], top_terms)  
+}
+
+pdf("Neurons_GO.pdf", width = 10, height=4.2)
+par(oma=c(0,5.5,0,0), mar=c(5,10,2,5))
+bp <- barplot(-log10(top_terms$p.value), horiz = T, yaxt = "n", col = "grey", xlab = expression(-log[10](Q)), 
+              border = "black", cex.main=0.7, cex.axis = .7, xlim = c(0, 30));
+axis(2, at = bp, labels = top_terms$term.name, tick = FALSE, las = 2, cex.axis = 0.8);
+abline(v = -log10(0.05), col = "black", lwd = 2, lty = 2)
+
+
+
+## Find hub genes
+# Load module kME 
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Module_kME.RData") 
+
+campbell.neurons <- modulekME[["BMI_Campbell_neurons"]]
+chen.neurons <- modulekME[["BMI_Chen_neurons"]]
+pers.neurons <- modulekME[["BMI_Pers_neurons"]]
+romanov.neurons <- modulekME[["BMI_Romanov_neurons"]]
+neurons.list <- list(campbell.neurons, chen.neurons, pers.neurons, romanov.neurons)
+
+hub.genes <- c()
+for (i in 1:length(neurons.list)) {
+  for (j in 1:ncol(neurons.list[[i]])) {
+    idx <- order(neurons.list[[i]][,j], decreasing = T)[1:20]
+    hub.genes <- c(hub.genes, rownames(neurons.list[[i]])[idx])
+    print(colnames(neurons.list[[i]])[j])
+    print(rownames(neurons.list[[i]])[idx])
+    
+  }
+}
+
+sort(duplicated(hub.genes))
+
