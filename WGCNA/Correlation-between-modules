@@ -8,7 +8,7 @@ library(reshape2)
 ## Figure 21 ##
 
 # Load BMI enriched modules 
-WGCNA.path <- "~/ygg-projects/mludwig/WGCNA/Correlation/BMI_Modules/" 
+WGCNA.path <- "~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/BMI_Modules/" 
 modulekME.names <- dir(path = WGCNA.path, pattern="[.]csv", recursive = T)
 
 modulekME <- vector(mode="list")
@@ -22,7 +22,7 @@ names(modulekME) = gsub(".csv", "", modulekME.names)
 # Pairwise correlation between module kMEs 
 correlation <- data.frame(matrix(NA, nrow = 105, ncol = 105))
 
-save(modulekME, file =  "~/ygg-projects/mludwig/WGCNA/Correlation/Module_kME.RData") 
+save(modulekME, file =  "~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/Module_kME.RData") 
 
 
 m <- 1
@@ -126,7 +126,7 @@ data.set <- data.set[idx]
 
 # Set size of circles in the graph to correspond to Q value of BMI GWAS association
 # Load Q value for BMI GWAS signal
-Q.values <- read.csv("~/ygg-projects/mludwig/WGCNA/Correlation/BMI_Q.csv", 
+Q.values <- read.csv("~/ygg-projects/mludwig/WGCNA/Hypothalamic_cells/WGCNA_FDR_Q.csv", 
                      check.names = FALSE, sep = ",")
 idx <- match(names(net2[1]), Q.values$module)
 size <- -log10(Q.values$Q)[idx]
