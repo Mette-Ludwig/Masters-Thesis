@@ -1,0 +1,318 @@
+### Plot module correlation on a graph (Figure 21 and 24) ###
+
+# Load packages
+library(igraph)
+library(dplyr)
+library(reshape2)
+
+## Figure 21 ##
+
+# Load BMI enriched modules 
+WGCNA.path <- "~/ygg-projects/mludwig/WGCNA/Correlation/BMI_Modules/" 
+modulekME.names <- dir(path = WGCNA.path, pattern="[.]csv", recursive = T)
+
+modulekME <- vector(mode="list")
+
+for(i in 1:length(modulekME.names)) {
+  modulekME[[i]] <- read.csv(paste(WGCNA.path, modulekME.names[[i]], sep = ""), row.names=1, check.names = FALSE, sep = ",")
+}
+names(modulekME) = gsub(".csv", "", modulekME.names)
+
+
+# Pairwise correlation between module kMEs 
+correlation <- data.frame(matrix(NA, nrow = 105, ncol = 105))
+
+save(modulekME, file =  "~/ygg-projects/mludwig/WGCNA/Correlation/Module_kME.RData") 
+
+
+m <- 1
+for (i in 1:length(names(modulekME))) {
+  
+  n.modules.i <- ncol(modulekME[[i]])
+  
+  # Name the rows and columns in data frame
+  module.prefix <- gsub("BMI_", "", paste(names(modulekME)[i], "_", sep = ""))
+  colnames(correlation)[m:(m + n.modules.i - 1)] <- gsub("ME", module.prefix, colnames(modulekME[[i]]))
+  rownames(correlation) <- colnames(correlation)
+  
+  # Correlation between modules from same data set and same cell type
+  correlation[m:(m + n.modules.i - 1), m:(m + n.modules.i - 1)] <- cor(modulekME[[i]], modulekME[[i]])
+  
+  
+  # Correlation between modules from different data sets and/or different cell types
+  for (j in 1:length(names(modulekME))) {
+    
+    if (j != i) {
+      
+      n.modules.j <- ncol(modulekME[[j]])
+      
+      genes.intersect <- intersect(rownames(modulekME[[i]]), rownames(modulekME[[j]]))
+      cortable.i <- data.frame(modulekME[[i]][genes.intersect, ])
+      cortable.j <- data.frame(modulekME[[j]][genes.intersect, ])
+      
+      idx <- which(is.na(correlation[m, ]))
+      
+      correlation[m:(m + n.modules.i - 1), idx[1]:(idx[1] + n.modules.j -1)] <- cor(cortable.i, cortable.j)
+      
+    }
+  }
+  
+  m <- m + ncol(modulekME[[i]])
+}  
+
+
+
+## Prepare data for plotting
+cor.matrix <- as.matrix(correlation)
+
+# Replace upper triangle of the matrix with number that can be used for filtering
+cor.matrix[upper.tri(cor.matrix)] <- 2
+
+cor.df <- melt(cor.matrix)
+
+# Filter out the upper matrix values
+# Filter out the self correlations
+names(cor.df) <- c('from', 'to', 'weight')
+cor.df <- filter(cor.df, weight != 2) %>% filter(from != to)
+cor.df$weight[cor.df$weight < 0.5] <- 0
+
+# Create igraph object
+net <- graph.data.frame(cor.df, directed = FALSE)
+
+par(mar=rep(.1, 4))
+
+# Delete edges where the correlation is smaller than 0.5
+net2 <- delete_edges(net, E(net)[weight < 0.5])
+
+# Allow circles to have a border
+mycircle <- function(coords, v=NULL, params) {
+  vertex.color <- params("vertex", "color")
+  if (length(vertex.color) != 1 && !is.null(v)) {
+    vertex.color <- vertex.color[v]
+  }
+  vertex.size  <- 1/200 * params("vertex", "size")
+  if (length(vertex.size) != 1 && !is.null(v)) {
+    vertex.size <- vertex.size[v]
+  }
+  vertex.frame.color <- params("vertex", "frame.color")
+  if (length(vertex.frame.color) != 1 && !is.null(v)) {
+    vertex.frame.color <- vertex.frame.color[v]
+  }
+  vertex.frame.width <- params("vertex", "frame.width")
+  if (length(vertex.frame.width) != 1 && !is.null(v)) {
+    vertex.frame.width <- vertex.frame.width[v]
+  }
+  
+  mapply(coords[,1], coords[,2], vertex.color, vertex.frame.color,
+         vertex.size, vertex.frame.width,
+         FUN=function(x, y, bg, fg, size, lwd) {
+           symbols(x=x, y=y, bg=bg, fg=fg, lwd=lwd,
+                   circles=size, add=TRUE, inches=FALSE)
+         })
+}
+
+add.vertex.shape("fcircle", clip=igraph.shape.noclip,
+                 plot=mycircle, parameters=list(vertex.frame.color=1,
+                                                vertex.frame.width=1))
+
+# Color the circle border by data set
+data.set <- vector(length = 105)
+data.set[which(grepl("Campbell", colnames(correlation)))] <- "black"
+data.set[which(grepl("Chen", colnames(correlation)))] <- "antiquewhite4"
+data.set[which(grepl("Pers", colnames(correlation)))] <- "darkgoldenrod"
+data.set[which(grepl("Romanov", colnames(correlation)))] <- "burlywood1"
+idx <- match(names(net2[1]), colnames(correlation))
+data.set <- data.set[idx]
+
+# Set size of circles in the graph to correspond to Q value of BMI GWAS association
+# Load Q value for BMI GWAS signal
+Q.values <- read.csv("~/ygg-projects/mludwig/WGCNA/Correlation/BMI_Q.csv", 
+                     check.names = FALSE, sep = ",")
+idx <- match(names(net2[1]), Q.values$module)
+size <- -log10(Q.values$Q)[idx]
+
+
+# Color the circles by cell type
+
+cell.types <- vector(length = 105)
+cell.types[which(grepl("neurons", colnames(correlation)))] <- "forestgreen"
+cell.types[which(grepl("ependymal", colnames(correlation)))] <- "olivedrab3"
+cell.types[which(grepl("tanycytes", colnames(correlation)))] <- "hotpink1"
+cell.types[which(grepl("oligodendrocytes", colnames(correlation)))] <- "turquoise3"
+cell.types[which(grepl("endothelial", colnames(correlation)))] <- "orange2"
+cell.types[which(grepl("immune", colnames(correlation)))] <- "green3"
+cell.types[which(grepl("astrocytes", colnames(correlation)))] <- "deeppink4"
+cell.types[which(grepl("OPCs", colnames(correlation)))] <- "navyblue"
+idx <- match(names(net2[1]), colnames(correlation))
+cell.types <- cell.types[idx]
+
+
+## Plot
+pdf("Network.pdf", width = 10, height=5)
+
+set.seed(10)
+par(oma=c(0,0,0,0), mar=c(0,0,0,0))
+size2 <- log10(size) 
+plot(net2, layout = layout.fruchterman.reingold(net2), edge.width = E(net2)$weight, vertex.label =  "",
+     vertex.color = adjustcolor(cell.types, alpha.f = 0.9), vertex.shape = "fcircle", 
+     vertex.frame.color = data.set, vertex.size = size2 * 12, vertex.frame.width = 2)
+sizeCut<- c(18, 10, 2)
+sizeCutScale <- log(sizeCut) * 5
+
+legend1 <- legend(-1.7, 1, legend = unique(sizeCut), pt.cex = sizeCutScale/200,
+                  pch=NA, pt.bg = 'white', box.col = "white", title = expression(-log[10](Q)), title.adj = 0, y.intersp = 2.3)
+x <- (legend1$text$x + legend1$rect$left) / 2
+y <- legend1$text$y
+symbols(x, y, circles = sizeCutScale/200, inches=FALSE, add = TRUE, bg = "grey")
+
+
+legend2 <- legend(1.3, 0, legend = c("Astrocytes", "Endothelial cells", "Ependymal cells", "Microglia",
+                                     "Neurons", "Oligodendrocytes", "OPCs", "Tanycytes"), pt.cex=sizeCutScale/200, 
+                  pch=21, pt.bg = 'white', box.col = "white", title = "Cell type", title.adj = 0, y.intersp = 1.3)
+q <- (legend2$text$x + legend2$rect$left) / 2
+p <- legend2$text$y
+symbols(q, p, circles = rep(0.05, 8), inches=FALSE, add = TRUE, bg = c("deeppink4", "orange2", "olivedrab3", "green3", "forestgreen",
+                                                                       "turquoise3", "navyblue", "hotpink1"))
+legend3 <- legend(-1.7, 0, legend = c("Campbell", "Chen", "Pers", "Romanov"), pt.cex=sizeCutScale/200, 
+                  pch=21, pt.bg = 'white', box.col = "white", title = "Data set", title.adj = 0, y.intersp = 1.3)
+r <- (legend3$text$x + legend3$rect$left) / 2
+t <- legend3$text$y
+symbols(r, t, circles = rep(0.05, 4), inches=FALSE, add = TRUE, bg = c("black", "antiquewhite4", "darkgoldenrod", "burlywood1"))
+
+
+
+## Figure 24 ##
+
+# Load data with module correlation coefficients to diet 
+pertubation.path <- "~/ygg-projects/mludwig/WGCNA/Correlation/Modules_diet_correlation/" 
+pertubation.names <- dir(path = pertubation.path, pattern="[.]csv", recursive = T)
+
+pertubation <- vector(mode="list")
+
+for(i in 1:length(pertubation.names)) {
+  pertubation[[i]] <- read.csv(paste(pertubation.path, pertubation.names[[i]], sep = ""), row.names=1, check.names = FALSE, sep = ",")
+}
+names(pertubation) = gsub(".csv", "", pertubation.names)
+
+
+fasted.correlation <- rep(NA, 105)
+HFD.correlation <- rep(NA, 105)
+
+
+m <- 1
+for (i in 1:length(names(modulekME))) {
+  
+  n.modules <- ncol(modulekME[[i]])
+  
+  module.prefix <- gsub("BMI_", "", paste(names(modulekME)[i], sep = ""))
+  
+  # Find corresponding file with correlation to diet
+  idx <- which(names(pertubation) %in% module.prefix)
+  module.names <- colnames(modulekME[[i]])
+  
+  if (any(grep("Campbell", module.prefix))) {
+    
+    # Correlation to fasting and HFD
+    fasted.correlation[m:(m + n.modules - 1)] <- pertubation[[idx]][module.names, "Fast"]
+    HFD.correlation[m:(m + n.modules - 1)] <- pertubation[[idx]][module.names, "HFD"]
+  }
+  
+  if (any(grep("Chen", module.prefix))) {
+    
+    # Correlation to fasting 
+    fasted.correlation[m:(m + n.modules - 1)] <- pertubation[[idx]][module.names, "Fast"]
+  }
+  
+  if (any(grep("Pers", module.prefix))) {
+    
+    # Correlation to HFD
+    HFD.correlation[m:(m + n.modules - 1)] <- pertubation[[idx]][module.names, "HFD"]
+  }
+  m <- m + ncol(modulekME[[i]])
+}
+
+
+
+idx <- match(names(net2[1]), colnames(correlation))
+
+cor.hfd <- HFD.correlation[idx]
+cor.fasted <- fasted.correlation[idx]
+
+
+# Color circles by correlation to diet
+maxColorValue <- 100
+
+# HFD 
+palette.hfd <- colorRampPalette(c("brown", "white", "turquoise"))(n = 299)
+cor.hfd <- c(cor.hfd, 0.35, 0.15, -0.15, -0.35)
+colors.hfd <- palette.hfd[cut(cor.hfd, 299)]
+colors.hfd[is.na(colors.hfd)] <- "grey"
+
+# Fasting
+palette.fasted <- colorRampPalette(c("green", "white", "darkmagenta"))(n = 299)
+cor.fasted <- c(cor.fasted, 0.45, 0.25, -0.25, -0.45)
+colors.fasted <- palette.fasted[cut(cor.fasted, 299)]
+colors.fasted[is.na(colors.fasted)] <- "grey"
+
+
+# Plot HFD network
+pdf("Network_hfd.pdf", width = 10, height=5)
+set.seed(10)
+par(oma=c(0,0,0,0), mar=c(0,0,0,0))
+size2 <- log10(size) 
+
+plot(net2, layout = layout.fruchterman.reingold(net2), edge.width = E(net2)$weight, vertex.label =  "",
+     vertex.shape = "fcircle", vertex.frame.color = data.set, vertex.frame.width = 2, 
+     vertex.color = adjustcolor(colors.hfd[-c(106:109)], alpha.f = 1), vertex.size = size2 * 12, vertex.shape = "fcircle",
+     vertex.frame.color = "black", vertex.label.color='white')
+sizeCut<- c(18, 10, 2)
+sizeCutScale <- log(sizeCut) * 5
+
+legend1 <- legend(1.3, 1, legend = unique(sizeCut), pt.cex = sizeCutScale/200,
+                  pch=NA, pt.bg = 'white', box.col = "white", title = expression(-log[10](Q)), title.adj = 0, y.intersp = 2.3)
+x <- (legend1$text$x + legend1$rect$left) / 2
+y <- legend1$text$y
+symbols(x, y, circles = sizeCutScale/200, inches=FALSE, add = TRUE, bg = "grey")
+
+legend2 <- legend(1.3, 0, legend = c("0.35", "0.15", "-0.15", "-0.35", "No data"), pt.cex=sizeCutScale/200, 
+                  pt.bg = 'white', box.col = "white", title = "ME correlation \nto HFD", title.adj = 0, y.intersp = 1.3)
+q <- (legend2$text$x + legend2$rect$left) / 2
+p <- legend2$text$y
+symbols(q, p, circles = rep(0.05, 5), inches=FALSE, add = TRUE, bg = c(colors.hfd[106], colors.hfd[107], colors.hfd[108], colors.hfd[109], "grey"))
+
+legend3 <- legend(-1.7, 0, legend = c("Campbell", "Chen", "Pers", "Romanov"), pt.cex=sizeCutScale/200, 
+                  pch=21, pt.bg = 'white', box.col = "white", title = "Data set", title.adj = 0, y.intersp = 1.3)
+r <- (legend3$text$x + legend3$rect$left) / 2
+t <- legend3$text$y
+symbols(r, t, circles = rep(0.05, 4), inches=FALSE, add = TRUE, bg = c("black", "antiquewhite4", "darkgoldenrod", "burlywood1"))
+
+
+# Plot fasted network
+pdf("Network_fasted.pdf", width = 10, height=5)
+
+set.seed(10)
+par(oma=c(0,0,0,0), mar=c(0,0,0,0))
+
+plot(net2, layout = layout.fruchterman.reingold(net2), edge.width = E(net2)$weight*2, vertex.label =  "",
+     vertex.shape = "fcircle", vertex.frame.color = data.set, vertex.frame.width = 2, 
+     vertex.color = adjustcolor(colors.fasted[-c(106:109)], alpha.f = 1), vertex.size = size2 * 12, vertex.label.color='white')
+sizeCut<- c(18, 10, 2)
+sizeCutScale <- log(sizeCut) * 5
+
+legend1 <- legend(1.3, 1, legend = unique(sizeCut), pt.cex = sizeCutScale/200,
+                  pch=NA, pt.bg = 'white', box.col = "white", title = expression(-log[10](Q)), title.adj = 0, y.intersp = 2.3)
+x <- (legend1$text$x + legend1$rect$left) / 2
+y <- legend1$text$y
+symbols(x, y, circles = sizeCutScale/200, inches=FALSE, add = TRUE, bg = "grey")
+
+legend2 <- legend(1.3, 0, legend = c("0.45", "0.25", "-0.25", "-0.45", "No data"), pt.cex=sizeCutScale/200, 
+                  pt.bg = 'white', box.col = "white", title = "ME correlation \nto fasting", title.adj = 0, y.intersp = 1.3)
+q <- (legend2$text$x + legend2$rect$left) / 2
+p <- legend2$text$y
+symbols(q, p, circles = rep(0.05, 5), inches=FALSE, add = TRUE, bg = c(colors.fasted[106], colors.fasted[107], colors.fasted[108], colors.fasted[109], "grey"))
+
+legend3 <- legend(-1.7, 0, legend = c("Campbell", "Chen", "Pers", "Romanov"), pt.cex=sizeCutScale/200, 
+                  pch=21, pt.bg = 'white', box.col = "white", title = "Data set", title.adj = 0, y.intersp = 1.3)
+r <- (legend3$text$x + legend3$rect$left) / 2
+t <- legend3$text$y
+symbols(r, t, circles = rep(0.05, 4), inches=FALSE, add = TRUE, bg = c("black", "antiquewhite4", "darkgoldenrod", "burlywood1"))
