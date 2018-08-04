@@ -1,0 +1,80 @@
+### Analysis of BMI GWAS associated tanycyte modules ###
+
+library(gProfileR)
+
+# Load the tanyctes modules
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Romanov_tanycytes_network.RData")
+romanov.tanycytes <- Network
+
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Campbell_tanycytes_network.RData")
+campbell.tanycytes <- Network
+
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Tancytes/Pers_tanycytes_network.RData")
+pers.tanycytes <- Network
+
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Tanycytes/Chen_tanycytes_network.RData")
+chen.tanycytes <- Network
+
+# Intercorrelated tanycytes modules
+tanycyte_list <- list(Network.campbell$yellow, Network.campbell$violet, Network.campbell$royalblue,
+                      Network.campbell$white, Network.campbell$red, Network.chen$brown,
+                      Network.chen$salmon, Network.pers$cyan, Network.pers$turquoise)
+
+
+# GO and KEGG enrichment
+terms = data.frame()
+for (m in 1:length(tanycytes_list)) {
+  
+  ## GO Enrichment
+  query = tanycytes_list[[m]]
+  go <- gprofiler(query, organism="mmusculus", ordered_query = F, correction_method = "fdr", 
+                  src_filter = c("GO", "KEGG"), max_set_size = 1000)
+  
+  go <- go[order(go$p.value),]
+  
+  module_name <- as.data.frame(rep(m, nrow(go)))
+  
+  terms <- rbind(terms, cbind(module_name, go))
+}
+colnames(terms)[1] <- "Module"
+
+
+# Plot the most enriched term for each module
+top_terms = data.frame()
+
+for(m in 1:9) {
+  idx = which(terms$Module == m) 
+  top_terms = rbind(terms[idx[1],], top_terms)  
+}
+
+pdf("Tanycytes_GO.pdf", width = 10, height=4.2)
+par(oma=c(0,4,0,0), mar=c(5,10,2,5))
+bp <- barplot(-log10(top_terms$p.value), horiz = T, yaxt = "n", col = "grey", xlab = expression(-log[10](Q)), 
+              border = "black", cex.main=0.7, cex.axis = .7, xlim = c(0, 15));
+axis(2, at = bp, labels = top_terms$term.name, tick = FALSE, las = 2, cex.axis = 0.8);
+abline(v = -log10(0.05), col = "black", lwd = 2, lty = 2)
+
+
+## Find hub genes
+
+# Load module kME 
+load("~/ygg-projects/mludwig/WGCNA/Correlation/Module_kME.RData") 
+
+campbell.tanycytes <- modulekME[["BMI_Campbell_tanycytes"]]
+chen.tanycytes <- modulekME[["BMI_Chen_tanycytes"]]
+pers.tanycytes <- modulekME[["BMI_Pers_tanycytes"]]
+romanov.tanycytes <- modulekME[["BMI_Romanov_tanycytes"]]
+tanycytes.list <- list(campbell.tanycytes, chen.tanycytes, pers.tanycytes, romanov.tanycytes)
+
+hub.genes <- c()
+for (i in 1:length(tanycytes.list)) {
+  for (j in 1:ncol(tanycytes.list[[i]])) {
+    idx <- order(tanycytes.list[[i]][,j], decreasing = T)[1:20]
+    hub.genes <- c(hub.genes, rownames(tanycytes.list[[i]])[idx])
+    print(colnames(tanycytes.list[[i]])[j])
+    print(rownames(tanycytes.list[[i]])[idx])
+    
+  }
+}
+
+sort(duplicated(hub.genes))
